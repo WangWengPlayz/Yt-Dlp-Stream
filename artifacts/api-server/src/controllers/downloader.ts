@@ -15,10 +15,21 @@ function buildBaseUrl(req: {
   protocol: string;
   get: (h: string) => string | undefined;
 }): string {
-  const host = req.get("x-forwarded-host") ?? req.get("host") ?? "localhost";
-  const proto =
-    req.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? req.protocol;
-  return `${proto}://${host}`;
+  const forwarded = req.get("x-forwarded-host");
+  const forwProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
+
+  if (forwarded && forwProto) {
+    return `${forwProto}://${forwarded}`;
+  }
+
+  const replitDomains = process.env["REPLIT_DOMAINS"];
+  if (replitDomains) {
+    const primary = replitDomains.split(",")[0]!.trim();
+    return `https://${primary}`;
+  }
+
+  const host = req.get("host") ?? "localhost";
+  return `${req.protocol}://${host}`;
 }
 
 export async function scheduleCleanup(
@@ -36,6 +47,11 @@ export async function scheduleCleanup(
   }, FILE_TTL_MS);
 }
 
+export interface MediaLinks {
+  download: string;
+  preview: string;
+}
+
 export interface DownloadResult {
   status: true;
   query: string;
@@ -45,7 +61,10 @@ export interface DownloadResult {
   channel: string;
   views: number;
   upload_date: string | null;
-  downloads: { mp4: string; mp3: string };
+  downloads: {
+    mp4: MediaLinks;
+    mp3: MediaLinks;
+  };
 }
 
 export async function processQuery(
@@ -84,8 +103,14 @@ export async function processQuery(
     views: meta.views,
     upload_date: meta.upload_date,
     downloads: {
-      mp4: `${base}/api/download/${id}.mp4`,
-      mp3: `${base}/api/download/${id}.mp3`,
+      mp4: {
+        download: `${base}/api/download/${id}.mp4`,
+        preview: `${base}/api/preview/${id}.mp4`,
+      },
+      mp3: {
+        download: `${base}/api/download/${id}.mp3`,
+        preview: `${base}/api/preview/${id}.mp3`,
+      },
     },
   };
 }
