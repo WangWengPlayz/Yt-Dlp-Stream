@@ -4,6 +4,7 @@ import v1Router from "./v1.js";
 import downloadRouter from "./download.js";
 import docsRouter from "./docs.js";
 import docRouter from "./doc.js";
+import consoleRouter from "./console.js";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(v1Router);
 router.use(downloadRouter);
 router.use(docsRouter);
 router.use(docRouter);
+router.use(consoleRouter);
 
 export default router;

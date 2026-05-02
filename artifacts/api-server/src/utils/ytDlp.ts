@@ -65,36 +65,55 @@ const FFMPEG_BIN = "ffmpeg";
 //   those cookies are forwarded.  Required only for age-restricted or
 //   otherwise protected videos.
 //
-// ── Lazy base args ─────────────────────────────────────────────────────────
-// Built at call-time so that cookies written to the env during startup
-// (by resolveCookiesFile() in index.ts) are always picked up.
+// ── Argument builders ──────────────────────────────────────────────────────
 //
-// Player client strategy:
-//   WITH cookies → "web"
-//     The web client fully supports cookie auth and works in all regions.
-//     ios skips cookies entirely; mweb requires a PO token for HTTPS formats.
-//   WITHOUT cookies → "ios"
-//     ios bypasses signature auth and works on some IPs without a session.
-//     Still fails on datacenter IPs flagged by YouTube — cookies are required
-//     for reliable operation on cloud hosts such as Render.
+// Two separate arg sets are used depending on the operation:
 //
-// --remote-components ejs:github
-//   Downloads yt-dlp's external JS challenge solver from the official GitHub
-//   release on first use (cached afterwards). Required for n-challenge and
-//   signature decryption on the web client.
-function getBaseArgs(): string[] {
+//   getMetadataArgs() — lightweight, no remote component download.
+//     Used only for --dump-json (metadata). Does NOT fetch the EJS challenge
+//     solver from GitHub, so the first cold-start request isn't penalised by
+//     a GitHub network round-trip that can stall for 5-30 s on cloud hosts.
+//
+//   getDownloadArgs() — full args including --remote-components ejs:github.
+//     The EJS solver is required to decrypt YouTube's n-challenge and
+//     signature cipher for actual media downloads. It is cached by yt-dlp
+//     in ~/.cache/yt-dlp/ so subsequent calls in the same deployment are fast.
+//
+// Player client strategy (applies to both):
+//   WITH cookies → "web"  (ios silently skips cookies; mweb needs a PO token)
+//   WITHOUT cookies → "ios,web"  (ios has lighter bot-detection; web fallback)
+
+function clientArgs(): string[] {
   const cookiesFile = process.env["YTDLP_COOKIES_FILE"];
   return [
     "--js-runtimes",
     `node:${process.execPath}`,
-    "--remote-components",
-    "ejs:github",
     "--extractor-args",
-    cookiesFile
-      ? "youtube:player_client=web"
-      : "youtube:player_client=ios,web",
+    cookiesFile ? "youtube:player_client=web" : "youtube:player_client=ios,web",
     ...(cookiesFile ? ["--cookies", cookiesFile] : []),
   ];
+}
+
+function getMetadataArgs(): string[] {
+  return clientArgs();
+}
+
+function getDownloadArgs(): string[] {
+  return [...clientArgs(), "--remote-components", "ejs:github"];
+}
+
+// ── Pre-warm ───────────────────────────────────────────────────────────────
+// Called once at startup to verify the binary is reachable and warm up
+// the process loader. Failures are logged but never crash the server.
+export async function prewarmYtDlp(): Promise<void> {
+  try {
+    await execFileAsync(YTDLP_BIN, ["--version"], {
+      timeout: 10_000,
+      env: YTDLP_ENV,
+    });
+  } catch {
+    // logged by caller
+  }
 }
 
 function isUrl(query: string): boolean {
@@ -132,7 +151,7 @@ export async function getMetadata(query: string): Promise<VideoMetadata> {
 
   const { stdout } = await execFileAsync(
     YTDLP_BIN,
-    [...getBaseArgs(), "--dump-json", "--skip-download", "--no-playlist", target],
+    [...getMetadataArgs(), "--dump-json", "--skip-download", "--no-playlist", target],
     { timeout: 30_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
   );
 
@@ -179,7 +198,7 @@ export async function downloadMp4(
     await execFileAsync(
       YTDLP_BIN,
       [
-        ...getBaseArgs(),
+        ...getDownloadArgs(),
         "-f",
         [
           "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]",
@@ -261,7 +280,7 @@ export async function downloadMp3(
     await execFileAsync(
       YTDLP_BIN,
       [
-        ...getBaseArgs(),
+        ...getDownloadArgs(),
         "-f",
         "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
         "--no-playlist",

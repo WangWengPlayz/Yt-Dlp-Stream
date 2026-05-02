@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getMetadata, downloadMp4, downloadMp3 } from "../utils/ytDlp.js";
 import { sanitizeFilename } from "../utils/filename.js";
 import { logger } from "../lib/logger.js";
+import { bus } from "../lib/eventBus.js";
 
 const DOWNLOAD_DIR = "/tmp/yt-downloads";
 const FILE_TTL_MS = 15 * 60 * 1000;
@@ -99,10 +100,17 @@ export async function processQuery(
 ): Promise<DownloadResult> {
   await ensureDownloadDir();
 
+  bus.push("step", "Received query", { q: query });
   logger.info({ query }, "Processing download query");
 
+  bus.push("step", "Fetching metadata from YouTube…");
   const meta = await getMetadata(query);
   logger.info({ title: meta.title, id: meta.id }, "Metadata fetched");
+  bus.push("info", "Metadata ready", {
+    title: meta.title,
+    duration: meta.duration,
+    channel: meta.channel,
+  });
 
   const id = uuidv4();
   const mp4Path = path.join(DOWNLOAD_DIR, `${id}.mp4`);
@@ -111,15 +119,21 @@ export async function processQuery(
   const sanitized = sanitizeFilename(meta.title);
   const sidecar: SidecarData = { title: meta.title, sanitized };
 
-  // Write sidecar before downloads so it exists even if one download fails
   await writeSidecar(id, sidecar);
 
+  bus.push("step", "Downloading MP4 + MP3 in parallel…", { id });
+
   await Promise.all([
-    downloadMp4(meta.webpage_url, mp4Path),
-    downloadMp3(meta.webpage_url, mp3Path),
+    downloadMp4(meta.webpage_url, mp4Path).then(() => {
+      bus.push("info", "MP4 download + remux complete", { id });
+    }),
+    downloadMp3(meta.webpage_url, mp3Path).then(() => {
+      bus.push("info", "MP3 encode complete", { id });
+    }),
   ]);
 
   logger.info({ id, sanitized }, "Downloads complete");
+  bus.push("done", "All done — links ready", { id, title: meta.title });
 
   scheduleCleanup(id, mp4Path, mp3Path).catch(() => {});
 

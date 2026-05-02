@@ -103,6 +103,8 @@ router.get("/doc", (req: Request, res: Response) => {
     transition: color 0.15s, background 0.15s;
   }
   .nav-link:hover { color: var(--text); background: var(--surface2); }
+  .nav-link.console { color: var(--green); border: 1px solid rgba(16,185,129,0.25); background: rgba(16,185,129,0.06); }
+  .nav-link.console:hover { background: rgba(16,185,129,0.12); }
 
   /* ── Layout ── */
   .page { max-width: 880px; margin: 0 auto; padding: 56px 24px 100px; }
@@ -330,6 +332,131 @@ router.get("/doc", (req: Request, res: Response) => {
   }
   .stack-badge .sb-icon { font-size: 1rem; }
 
+  /* ── Cookie converter ── */
+  .cookie-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    position: relative;
+    overflow: hidden;
+  }
+  .cookie-box::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 0% 0%, rgba(16,185,129,0.05) 0%, transparent 60%);
+    pointer-events: none;
+  }
+  .cookie-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .cookie-tab {
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .cookie-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .cookie-tab:hover:not(.active) { color: var(--text); }
+  .cookie-pane { display: none; }
+  .cookie-pane.active { display: block; }
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(99,102,241,0.04); }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+  .upload-icon { font-size: 2rem; margin-bottom: 8px; }
+  .upload-text { font-size: 0.85rem; color: var(--muted); }
+  .upload-text strong { color: var(--text); }
+  .paste-area {
+    width: 100%;
+    min-height: 120px;
+    background: var(--bg);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: var(--text);
+    resize: vertical;
+    outline: none;
+    line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+  .paste-area::placeholder { color: var(--muted); }
+  .paste-area:focus { border-color: var(--accent); }
+  .b64-result {
+    margin-top: 18px;
+    display: none;
+  }
+  .b64-result.show { display: block; }
+  .b64-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--green);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .b64-output-wrap { position: relative; }
+  .b64-output {
+    width: 100%;
+    background: var(--bg);
+    border: 1.5px solid rgba(16,185,129,0.3);
+    border-radius: 10px;
+    padding: 12px 14px;
+    padding-right: 90px;
+    font-family: monospace;
+    font-size: 0.72rem;
+    color: #86efac;
+    resize: none;
+    height: 80px;
+    outline: none;
+    line-height: 1.5;
+    word-break: break-all;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: none;
+    background: var(--green);
+    color: #000;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .copy-btn:hover { opacity: 0.85; }
+  .cookie-hint {
+    margin-top: 12px;
+    font-size: 0.78rem;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+  .cookie-hint code { background: var(--surface2); color: var(--accent-hover); padding: 1px 5px; border-radius: 4px; font-size: 0.78rem; }
+
   /* ── Copyright ── */
   .copyright-box {
     background: linear-gradient(135deg, rgba(245,158,11,0.06) 0%, rgba(239,68,68,0.06) 100%);
@@ -391,9 +518,9 @@ router.get("/doc", (req: Request, res: Response) => {
   <nav class="header-nav">
     <a class="nav-link" href="#purpose">Purpose</a>
     <a class="nav-link" href="#endpoints">Endpoints</a>
-    <a class="nav-link" href="#response">Response</a>
+    <a class="nav-link" href="#cookies">Cookies</a>
     <a class="nav-link" href="#copyright">Copyright</a>
-    <a class="nav-link" href="/api/docs">Full Docs</a>
+    <a class="nav-link console" href="/api/console">⬛ Console</a>
   </nav>
 </header>
 
@@ -571,6 +698,63 @@ router.get("/doc", (req: Request, res: Response) => {
     </div>
   </section>
 
+  <!-- Cookie Converter -->
+  <section class="section" id="cookies">
+    <h2 class="section-title"><span class="icon">🍪</span> Cookie Converter</h2>
+    <div class="cookie-box">
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:18px;line-height:1.65;">
+        Cloud server IPs (Render, Railway, Fly.io…) are flagged by YouTube. Upload or paste your
+        <strong style="color:var(--text)">cookies.txt</strong> below — it will be converted to a base64
+        string you can paste directly into your host's environment variables as
+        <code>YTDLP_COOKIES_B64</code>.
+        Get cookies.txt using the
+        <a href="https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc"
+           target="_blank" rel="noopener" style="color:var(--accent);">Get cookies.txt LOCALLY</a> extension
+        while signed into YouTube.
+      </p>
+
+      <div class="cookie-tabs">
+        <button class="cookie-tab active" onclick="switchTab('upload')">📁 Upload file</button>
+        <button class="cookie-tab" onclick="switchTab('paste')">📋 Paste text</button>
+      </div>
+
+      <div class="cookie-pane active" id="pane-upload">
+        <div class="upload-zone" id="upload-zone"
+             ondragover="event.preventDefault();this.classList.add('drag')"
+             ondragleave="this.classList.remove('drag')"
+             ondrop="handleDrop(event)">
+          <input type="file" accept=".txt,text/plain" onchange="handleFile(this.files[0])"/>
+          <div class="upload-icon">📄</div>
+          <div class="upload-text">
+            <strong>Click to choose</strong> cookies.txt or drag it here
+          </div>
+        </div>
+      </div>
+
+      <div class="cookie-pane" id="pane-paste">
+        <textarea
+          class="paste-area"
+          id="paste-area"
+          placeholder="Paste the contents of cookies.txt here… (starts with # Netscape HTTP Cookie File)"
+          oninput="handlePaste(this.value)"
+        ></textarea>
+      </div>
+
+      <div class="b64-result" id="b64-result">
+        <div class="b64-label">✅ Ready — copy this value into <code>YTDLP_COOKIES_B64</code></div>
+        <div class="b64-output-wrap">
+          <textarea class="b64-output" id="b64-output" readonly></textarea>
+          <button class="copy-btn" onclick="copyB64()" id="copy-btn">Copy</button>
+        </div>
+        <p class="cookie-hint">
+          On Render: <strong style="color:var(--text)">Dashboard → your service → Environment → Add Secret Variable</strong><br/>
+          Key: <code>YTDLP_COOKIES_B64</code> &nbsp;·&nbsp; Value: paste the text above.<br/>
+          Cookies expire after ~6–12 months. Re-export and repeat when requests start failing again.
+        </p>
+      </div>
+    </div>
+  </section>
+
   <!-- Copyright -->
   <section class="section" id="copyright">
     <h2 class="section-title"><span class="icon">⚖️</span> Copyright &amp; Disclaimer</h2>
@@ -618,6 +802,7 @@ router.get("/doc", (req: Request, res: Response) => {
 </footer>
 
 <script>
+  // ── Try-it ─────────────────────────────────────────────────────────────
   function tryApi() {
     const q = document.getElementById('try-input').value.trim();
     if (!q) {
@@ -635,6 +820,57 @@ router.get("/doc", (req: Request, res: Response) => {
   document.getElementById('try-input').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') tryApi();
   });
+
+  // ── Cookie converter ────────────────────────────────────────────────────
+  function switchTab(tab) {
+    document.querySelectorAll('.cookie-tab').forEach((el, i) => {
+      el.classList.toggle('active', (i === 0 && tab === 'upload') || (i === 1 && tab === 'paste'));
+    });
+    document.getElementById('pane-upload').classList.toggle('active', tab === 'upload');
+    document.getElementById('pane-paste').classList.toggle('active', tab === 'paste');
+  }
+
+  function showB64(text) {
+    if (!text.trim()) return;
+    // btoa only handles latin1 — use TextEncoder for safety
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    bytes.forEach(b => binary += String.fromCharCode(b));
+    const b64 = btoa(binary);
+    document.getElementById('b64-output').value = b64;
+    document.getElementById('b64-result').classList.add('show');
+    document.getElementById('copy-btn').textContent = 'Copy';
+  }
+
+  function handleFile(file) {
+    if (!file) return;
+    const zone = document.getElementById('upload-zone');
+    zone.classList.remove('drag');
+    const reader = new FileReader();
+    reader.onload = e => showB64(e.target.result);
+    reader.readAsText(file);
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    document.getElementById('upload-zone').classList.remove('drag');
+    const file = event.dataTransfer.files[0];
+    if (file) handleFile(file);
+  }
+
+  function handlePaste(value) {
+    showB64(value);
+  }
+
+  function copyB64() {
+    const val = document.getElementById('b64-output').value;
+    navigator.clipboard.writeText(val).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent = 'Copied!';
+      btn.style.background = '#10b981';
+      setTimeout(() => { btn.textContent = 'Copy'; btn.style.background = ''; }, 2000);
+    });
+  }
 </script>
 
 </body>
