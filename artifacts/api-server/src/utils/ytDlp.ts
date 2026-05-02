@@ -1,11 +1,15 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
+import { promises as fs } from "fs";
 
 const execFileAsync = promisify(execFile);
 
 const PYTHONLIBS_BIN = "/home/runner/workspace/.pythonlibs/bin";
 const YTDLP_BIN = path.join(PYTHONLIBS_BIN, "yt-dlp");
+
+// ffmpeg is provided by the Replit runtime
+const FFMPEG_BIN = "ffmpeg";
 
 const YTDLP_ENV = {
   ...process.env,
@@ -77,45 +81,157 @@ export async function getMetadata(query: string): Promise<VideoMetadata> {
   };
 }
 
+/**
+ * Download MP4 and ensure it is:
+ *   - Properly merged (H.264 video + AAC audio preferred to avoid VFR issues)
+ *   - faststart-flagged so browsers can play before the entire file loads
+ *   - Timestamp-corrected to eliminate A/V sync drift
+ *
+ * Strategy: two-pass
+ *   1. yt-dlp downloads and merges to a temp file
+ *   2. ffmpeg remuxes with moov relocation + timestamp fixes → final output
+ */
 export async function downloadMp4(
   videoUrl: string,
   outputPath: string,
 ): Promise<void> {
-  await execFileAsync(
-    YTDLP_BIN,
-    [
-      "-f",
-      "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best",
-      "--merge-output-format",
-      "mp4",
-      "--no-playlist",
-      "-o",
-      outputPath,
-      videoUrl,
-    ],
-    { timeout: 300_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
-  );
+  const tmpPath = outputPath.replace(/\.mp4$/, ".tmp.mp4");
+
+  try {
+    // Pass 1 — download & merge
+    // Prefer avc1 (H.264) + m4a (AAC) to avoid Variable Frame Rate issues.
+    // Fall back progressively to ensure something always downloads.
+    await execFileAsync(
+      YTDLP_BIN,
+      [
+        "-f",
+        [
+          "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]",
+          "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]",
+          "bestvideo[ext=mp4]+bestaudio[ext=m4a]",
+          "bestvideo+bestaudio",
+          "best[ext=mp4]",
+          "best",
+        ].join("/"),
+        "--merge-output-format",
+        "mp4",
+        "--no-playlist",
+        // Retry on fragment errors
+        "--fragment-retries",
+        "10",
+        "--retries",
+        "5",
+        // Parallel fragment downloads for speed
+        "-N",
+        "4",
+        "-o",
+        tmpPath,
+        videoUrl,
+      ],
+      { timeout: 600_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
+    );
+
+    // Pass 2 — remux with ffmpeg for sync + browser compatibility
+    //   -c:v copy          stream-copy video (no re-encode, fast)
+    //   -c:a copy          stream-copy audio
+    //   -avoid_negative_ts make_zero  fix any negative timestamps from merge
+    //   -fflags +genpts    regenerate PTS to eliminate drift
+    //   -movflags +faststart  move moov atom to file start for progressive playback
+    await execFileAsync(
+      FFMPEG_BIN,
+      [
+        "-y",
+        "-i",
+        tmpPath,
+        "-c:v",
+        "copy",
+        "-c:a",
+        "copy",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-fflags",
+        "+genpts",
+        "-movflags",
+        "+faststart",
+        "-map_metadata",
+        "0",
+        outputPath,
+      ],
+      { timeout: 300_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
+    );
+  } finally {
+    // Remove temp file regardless of success/failure
+    await fs.unlink(tmpPath).catch(() => {});
+  }
 }
 
+/**
+ * Download MP3 and ensure it is:
+ *   - Sourced from M4A/AAC where possible (avoids Opus → MP3 conversion artifacts)
+ *   - Encoded at 192 kbps stereo 44.1 kHz with libmp3lame for consistent output
+ *   - Free from cutouts caused by incomplete stream conversion
+ *
+ * Strategy: two-pass
+ *   1. yt-dlp downloads the best audio to a temp file (no in-yt-dlp conversion)
+ *   2. ffmpeg encodes to MP3 with explicit, safe parameters
+ */
 export async function downloadMp3(
   videoUrl: string,
   outputPath: string,
 ): Promise<void> {
-  await execFileAsync(
-    YTDLP_BIN,
-    [
-      "-f",
-      "bestaudio",
-      "-x",
-      "--audio-format",
-      "mp3",
-      "--audio-quality",
-      "192K",
-      "--no-playlist",
-      "-o",
-      outputPath,
-      videoUrl,
-    ],
-    { timeout: 300_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
-  );
+  // Use a .audio extension so yt-dlp doesn't try to rename it
+  const tmpPath = outputPath.replace(/\.mp3$/, ".tmp.audio");
+
+  try {
+    // Pass 1 — download best audio as-is (prefer M4A to avoid Opus conversion path)
+    await execFileAsync(
+      YTDLP_BIN,
+      [
+        "-f",
+        "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
+        "--no-playlist",
+        "--fragment-retries",
+        "10",
+        "--retries",
+        "5",
+        "-N",
+        "4",
+        "-o",
+        tmpPath,
+        videoUrl,
+      ],
+      { timeout: 300_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
+    );
+
+    // Pass 2 — encode to MP3 with libmp3lame
+    //   -vn              discard any video stream
+    //   -c:a libmp3lame  use the LAME encoder (produces clean, compatible MP3)
+    //   -b:a 192k        constant bitrate 192 kbps
+    //   -ar 44100        standard sample rate (avoids rate-conversion artefacts)
+    //   -ac 2            stereo output
+    //   -write_xing 1    write Xing/Info header so players know total duration
+    await execFileAsync(
+      FFMPEG_BIN,
+      [
+        "-y",
+        "-i",
+        tmpPath,
+        "-vn",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "192k",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-write_xing",
+        "1",
+        outputPath,
+      ],
+      { timeout: 300_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
+    );
+  } finally {
+    await fs.unlink(tmpPath).catch(() => {});
+  }
 }
