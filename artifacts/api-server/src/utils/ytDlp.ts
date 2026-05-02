@@ -5,22 +5,48 @@ import { promises as fs } from "fs";
 
 const execFileAsync = promisify(execFile);
 
-const PYTHONLIBS_BIN = "/home/runner/workspace/.pythonlibs/bin";
-const YTDLP_BIN = path.join(PYTHONLIBS_BIN, "yt-dlp");
+// ── Binary resolution ──────────────────────────────────────────────────────
+// We search common pip install locations so the same code works on Replit,
+// Render, Railway, Fly.io, plain Ubuntu VMs, and local machines without
+// any environment-specific hardcoding.
+const EXTRA_BIN_DIRS = [
+  // Replit pip location
+  "/home/runner/workspace/.pythonlibs/bin",
+  // Linux user-level pip install (most common on Render / Railway)
+  `${process.env["HOME"] ?? "/root"}/.local/bin`,
+  // System-level pip install
+  "/usr/local/bin",
+  "/usr/bin",
+];
 
-// ffmpeg is provided by the Replit runtime
-const FFMPEG_BIN = "ffmpeg";
+const EXTRA_PYTHON_PATHS = [
+  "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages",
+];
+
+// Build an augmented PATH that the child processes will inherit.
+// If yt-dlp / ffmpeg already live in the system PATH they will be found
+// there; the extra dirs are prepended so Replit's local install wins on
+// Replit and the system install wins everywhere else.
+const AUGMENTED_PATH = [
+  ...EXTRA_BIN_DIRS,
+  process.env["PATH"] ?? "",
+].filter(Boolean).join(":");
 
 const YTDLP_ENV = {
   ...process.env,
-  PATH: [PYTHONLIBS_BIN, process.env["PATH"] ?? ""].filter(Boolean).join(":"),
+  PATH: AUGMENTED_PATH,
   PYTHONPATH: [
-    "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages",
+    ...EXTRA_PYTHON_PATHS,
     process.env["PYTHONPATH"] ?? "",
   ]
     .filter(Boolean)
     .join(":"),
 };
+
+// Use the bare command name — the augmented PATH above will locate the right
+// binary whether it was installed by pip, apt, brew, or any other method.
+const YTDLP_BIN = "yt-dlp";
+const FFMPEG_BIN = "ffmpeg";
 
 function isUrl(query: string): boolean {
   return (
