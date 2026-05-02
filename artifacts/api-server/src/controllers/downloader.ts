@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { getMetadata, downloadMp4, downloadMp3 } from "../utils/ytDlp.js";
+import { sanitizeFilename } from "../utils/filename.js";
 import { logger } from "../lib/logger.js";
 
 const DOWNLOAD_DIR = "/tmp/yt-downloads";
@@ -32,16 +33,41 @@ function buildBaseUrl(req: {
   return `${req.protocol}://${host}`;
 }
 
+/** Sidecar JSON written next to each UUID media file so the serve route can
+ *  look up the human-readable title without keeping anything in memory. */
+export interface SidecarData {
+  title: string;
+  sanitized: string; // pre-sanitized stem ready for Content-Disposition
+}
+
+export async function readSidecar(id: string): Promise<SidecarData | null> {
+  const sidecarPath = path.join(DOWNLOAD_DIR, `${id}.json`);
+  try {
+    const raw = await fs.readFile(sidecarPath, "utf8");
+    return JSON.parse(raw) as SidecarData;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSidecar(id: string, data: SidecarData): Promise<void> {
+  const sidecarPath = path.join(DOWNLOAD_DIR, `${id}.json`);
+  await fs.writeFile(sidecarPath, JSON.stringify(data), "utf8");
+}
+
 export async function scheduleCleanup(
+  id: string,
   mp4Path: string,
   mp3Path: string,
 ): Promise<void> {
   setTimeout(async () => {
-    for (const p of [mp4Path, mp3Path]) {
+    const sidecarPath = path.join(DOWNLOAD_DIR, `${id}.json`);
+    for (const p of [mp4Path, mp3Path, sidecarPath]) {
       try {
         await fs.unlink(p);
         logger.info({ path: p }, "Cleaned up temp file");
       } catch {
+        // File may already be gone — ignore
       }
     }
   }, FILE_TTL_MS);
@@ -82,14 +108,20 @@ export async function processQuery(
   const mp4Path = path.join(DOWNLOAD_DIR, `${id}.mp4`);
   const mp3Path = path.join(DOWNLOAD_DIR, `${id}.mp3`);
 
+  const sanitized = sanitizeFilename(meta.title);
+  const sidecar: SidecarData = { title: meta.title, sanitized };
+
+  // Write sidecar before downloads so it exists even if one download fails
+  await writeSidecar(id, sidecar);
+
   await Promise.all([
     downloadMp4(meta.webpage_url, mp4Path),
     downloadMp3(meta.webpage_url, mp3Path),
   ]);
 
-  logger.info({ id }, "Downloads complete");
+  logger.info({ id, sanitized }, "Downloads complete");
 
-  scheduleCleanup(mp4Path, mp3Path).catch(() => {});
+  scheduleCleanup(id, mp4Path, mp3Path).catch(() => {});
 
   const base = buildBaseUrl(req);
 
