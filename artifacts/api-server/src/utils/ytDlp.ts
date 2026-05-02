@@ -68,15 +68,31 @@ const FFMPEG_BIN = "ffmpeg";
 // ── Lazy base args ─────────────────────────────────────────────────────────
 // Built at call-time so that cookies written to the env during startup
 // (by resolveCookiesFile() in index.ts) are always picked up.
+//
+// Player client strategy:
+//   WITH cookies → "web"
+//     The web client fully supports cookie auth and works in all regions.
+//     ios skips cookies entirely; mweb requires a PO token for HTTPS formats.
+//   WITHOUT cookies → "ios"
+//     ios bypasses signature auth and works on some IPs without a session.
+//     Still fails on datacenter IPs flagged by YouTube — cookies are required
+//     for reliable operation on cloud hosts such as Render.
+//
+// --remote-components ejs:github
+//   Downloads yt-dlp's external JS challenge solver from the official GitHub
+//   release on first use (cached afterwards). Required for n-challenge and
+//   signature decryption on the web client.
 function getBaseArgs(): string[] {
   const cookiesFile = process.env["YTDLP_COOKIES_FILE"];
   return [
     "--js-runtimes",
     `node:${process.execPath}`,
-    // ios client has lighter bot-detection; web is the fallback for formats
-    // that the ios client can't serve. Together they cover almost all videos.
+    "--remote-components",
+    "ejs:github",
     "--extractor-args",
-    "youtube:player_client=ios,web",
+    cookiesFile
+      ? "youtube:player_client=web"
+      : "youtube:player_client=ios,web",
     ...(cookiesFile ? ["--cookies", cookiesFile] : []),
   ];
 }
