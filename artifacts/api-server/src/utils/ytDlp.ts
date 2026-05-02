@@ -48,6 +48,39 @@ const YTDLP_ENV = {
 const YTDLP_BIN = "yt-dlp";
 const FFMPEG_BIN = "ffmpeg";
 
+// ── Base yt-dlp args applied to every invocation ──────────────────────────
+//
+// --js-runtimes nodejs:<path>
+//   yt-dlp needs a JS runtime to decrypt YouTube's signature cipher.
+//   We point it at the Node.js binary that is already running this server
+//   so it works on any host without installing Deno or PhantomJS.
+//
+// --extractor-args "youtube:player_client=tv_embedded,web"
+//   The "tv_embedded" player client is treated differently by YouTube's
+//   bot-detection pipeline and does not require sign-in for most videos.
+//   "web" is used as the fallback for any format tv_embedded can't serve.
+//
+// --cookies <file>  (optional)
+//   If the operator sets YTDLP_COOKIES_FILE to a Netscape-format cookies.txt,
+//   those cookies are forwarded.  Required only for age-restricted or
+//   otherwise protected videos.
+//
+// ── Lazy base args ─────────────────────────────────────────────────────────
+// Built at call-time so that cookies written to the env during startup
+// (by resolveCookiesFile() in index.ts) are always picked up.
+function getBaseArgs(): string[] {
+  const cookiesFile = process.env["YTDLP_COOKIES_FILE"];
+  return [
+    "--js-runtimes",
+    `node:${process.execPath}`,
+    // ios client has lighter bot-detection; web is the fallback for formats
+    // that the ios client can't serve. Together they cover almost all videos.
+    "--extractor-args",
+    "youtube:player_client=ios,web",
+    ...(cookiesFile ? ["--cookies", cookiesFile] : []),
+  ];
+}
+
 function isUrl(query: string): boolean {
   return (
     /^https?:\/\//i.test(query) ||
@@ -83,7 +116,7 @@ export async function getMetadata(query: string): Promise<VideoMetadata> {
 
   const { stdout } = await execFileAsync(
     YTDLP_BIN,
-    ["--dump-json", "--skip-download", "--no-playlist", target],
+    [...getBaseArgs(), "--dump-json", "--skip-download", "--no-playlist", target],
     { timeout: 30_000, env: YTDLP_ENV, maxBuffer: 10 * 1024 * 1024 },
   );
 
@@ -130,6 +163,7 @@ export async function downloadMp4(
     await execFileAsync(
       YTDLP_BIN,
       [
+        ...getBaseArgs(),
         "-f",
         [
           "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]",
@@ -142,12 +176,10 @@ export async function downloadMp4(
         "--merge-output-format",
         "mp4",
         "--no-playlist",
-        // Retry on fragment errors
         "--fragment-retries",
         "10",
         "--retries",
         "5",
-        // Parallel fragment downloads for speed
         "-N",
         "4",
         "-o",
@@ -213,6 +245,7 @@ export async function downloadMp3(
     await execFileAsync(
       YTDLP_BIN,
       [
+        ...getBaseArgs(),
         "-f",
         "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
         "--no-playlist",
